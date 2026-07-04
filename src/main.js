@@ -1,60 +1,81 @@
-// Configuration
-const CONFIG = {
-    plyFile: './assets/model.ply', // PLY 文件路径
-    canvas: document.getElementById('canvas'),
-    vertexShaderPath: './shaders/splat_vertex.glsl',
-    fragmentShaderPath: './shaders/splat_fragment.glsl',
-};
+// High-quality 3D Gaussian Splatting Viewer
+// Based on: https://github.com/kishimisu/Gaussian-Splatting-WebGL
 
-let gl;
-let program;
+let gl, program;
 let camera;
 let splats = null;
-let vao, vbo, colorVBO, indexCount;
-let sortWorker;
-let lastSortTime = 0;
-const SORT_INTERVAL = 50; // Sort every 50ms
+let vao;
+let indexCount = 0;
+let canvasSize = [0, 0];
+let renderFrameRequest = null;
+let renderTimeout = null;
+
+const settings = {
+    renderResolution: 1.0,
+    maxGaussians: 1000000,
+    scalingModifier: 1.0,
+    bgColor: '#000000',
+    fov: 47,
+    debugDepth: false
+};
+
+const CONFIG = {
+    plyFile: './assets/model.ply',
+    canvas: null
+};
 
 // Initialize WebGL
 function initWebGL() {
+    CONFIG.canvas = document.getElementById('canvas');
     gl = CONFIG.canvas.getContext('webgl2');
+    
     if (!gl) {
-        alert('WebGL2 not supported');
+        console.error('WebGL2 not supported');
         return false;
     }
 
     gl.viewport(0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    gl.clearColor(0, 0, 0, 1);
+    
+    // Set blending mode for proper Gaussian splatting
+    gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFunc(gl.ONE_MINUS_DST_ALPHA, gl.ONE);
 
     return true;
 }
 
-// Load shaders
+// Load and compile shaders
 async function loadShaders() {
     try {
-        const vertexSource = await fetch(CONFIG.vertexShaderPath).then(r => r.text());
-        const fragmentSource = await fetch(CONFIG.fragmentShaderPath).then(r => r.text());
+        const vertexSource = await fetch('./shaders/splat_vertex.glsl').then(r => r.text());
+        const fragmentSource = await fetch('./shaders/splat_fragment.glsl').then(r => r.text());
 
-        const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
-        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
-
-        program = gl.createProgram();
-        gl.attachShader(program, vertexShader);
-        gl.attachShader(program, fragmentShader);
-        gl.linkProgram(program);
-
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-            console.error('Program link error:', gl.getProgramInfoLog(program));
-            return false;
-        }
-
-        return true;
+        program = createProgram(vertexSource, fragmentSource);
+        return program != null;
     } catch (error) {
         console.error('Error loading shaders:', error);
         return false;
     }
+}
+
+function createProgram(vertexSource, fragmentSource) {
+    const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+
+    if (!vertexShader || !fragmentShader) return null;
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Program link error:', gl.getProgramInfoLog(program));
+        return null;
+    }
+
+    return program;
 }
 
 function createShader(type, source) {
@@ -70,192 +91,175 @@ function createShader(type, source) {
     return shader;
 }
 
-// Create demo data (colorful point cloud)
-function createDemoData() {
-    const vertexCount = 50000;
-    const positions = new Float32Array(vertexCount * 3);
-    const colors = new Uint8Array(vertexCount * 4);
-    const covariances = new Float32Array(vertexCount * 3);
-
-    for (let i = 0; i < vertexCount; i++) {
-        // Random points in a sphere
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.random() * Math.PI;
-        const r = Math.random() * 2;
-
-        positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
-        positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-        positions[i * 3 + 2] = r * Math.cos(phi);
-
-        // Random colors
-        colors[i * 4 + 0] = Math.random() * 255;
-        colors[i * 4 + 1] = Math.random() * 255;
-        colors[i * 4 + 2] = Math.random() * 255;
-        colors[i * 4 + 3] = 255;
-
-        // Random covariance
-        covariances[i * 3 + 0] = 0.1 + Math.random() * 0.1;
-        covariances[i * 3 + 1] = 0.1 + Math.random() * 0.1;
-        covariances[i * 3 + 2] = 0.1 + Math.random() * 0.1;
-    }
-
-    return {
-        positions,
-        colors,
-        covariances,
-        vertexCount,
-    };
-}
-
-// Setup camera
-function setupCamera() {
-    camera = new Camera(CONFIG.canvas.width, CONFIG.canvas.height);
-    setupMouseControls();
-}
-
-function setupMouseControls() {
-    let isDragging = false;
-    let lastX, lastY;
-
-    CONFIG.canvas.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-    });
-
-    CONFIG.canvas.addEventListener('mousemove', (e) => {
-        if (isDragging) {
-            const deltaX = e.clientX - lastX;
-            const deltaY = e.clientY - lastY;
-            camera.rotate(deltaX * 0.01, deltaY * 0.01);
-            lastX = e.clientX;
-            lastY = e.clientY;
-        }
-    });
-
-    CONFIG.canvas.addEventListener('mouseup', () => {
-        isDragging = false;
-    });
-
-    CONFIG.canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        camera.zoom(e.deltaY > 0 ? 1.1 : 0.9);
-    });
-}
-
 // Setup WebGL buffers
 function setupBuffers() {
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
 
-    // Position buffer
-    vbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, splats.positions, gl.STATIC_DRAW);
+    const setupBuffer = (name, data, components) => {
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        
+        const location = gl.getAttribLocation(program, name);
+        gl.enableVertexAttribArray(location);
+        gl.vertexAttribPointer(location, components, gl.FLOAT, false, 0, 0);
+        gl.vertexAttribDivisor(location, 1);
+        return buffer;
+    };
 
-    const posLoc = gl.getAttribLocation(program, 'position');
-    gl.enableVertexAttribArray(posLoc);
-    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 12, 0);
+    // Setup position buffer
+    setupBuffer('a_center', new Float32Array(splats.positions), 3);
+    
+    // Setup color buffer
+    setupBuffer('a_col', new Float32Array(splats.colors), 3);
+    
+    // Setup opacity buffer
+    setupBuffer('a_opacity', new Float32Array(splats.opacities), 1);
+    
+    // Setup covariance buffers
+    const cov3Ds = new Float32Array(splats.cov3Ds);
+    const covA = new Float32Array(splats.vertexCount * 3);
+    const covB = new Float32Array(splats.vertexCount * 3);
+    
+    for (let i = 0; i < splats.vertexCount; i++) {
+        covA[i * 3 + 0] = cov3Ds[i * 6 + 0];
+        covA[i * 3 + 1] = cov3Ds[i * 6 + 1];
+        covA[i * 3 + 2] = cov3Ds[i * 6 + 2];
+        
+        covB[i * 3 + 0] = cov3Ds[i * 6 + 3];
+        covB[i * 3 + 1] = cov3Ds[i * 6 + 4];
+        covB[i * 3 + 2] = cov3Ds[i * 6 + 5];
+    }
+    
+    setupBuffer('a_covA', covA, 3);
+    setupBuffer('a_covB', covB, 3);
 
-    // Color buffer
-    colorVBO = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, colorVBO);
-    gl.bufferData(gl.ARRAY_BUFFER, splats.colors, gl.STATIC_DRAW);
-
-    const colorLoc = gl.getAttribLocation(program, 'color');
-    gl.enableVertexAttribArray(colorLoc);
-    gl.vertexAttribPointer(colorLoc, 4, gl.UNSIGNED_BYTE, true, 4, 0);
-
-    // Covariance buffer
-    const covBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, covBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, splats.covariances, gl.STATIC_DRAW);
-
-    const covLoc = gl.getAttribLocation(program, 'covariance');
-    gl.enableVertexAttribArray(covLoc);
-    gl.vertexAttribPointer(covLoc, 3, gl.FLOAT, false, 12, 0);
-
-    indexCount = splats.positions.length / 3;
+    indexCount = Math.min(splats.vertexCount, settings.maxGaussians);
 }
 
-// Sort splats by depth
-function sortSplats() {
-    if (!camera) return;
-    const now = Date.now();
-    if (now - lastSortTime < SORT_INTERVAL) return;
-    lastSortTime = now;
-
-    if (sortWorker) {
-        sortWorker.postMessage({
-            positions: splats.positions,
-            viewMatrix: camera.getViewMatrix(),
-        });
-    }
+// Setup camera
+function setupCamera() {
+    camera = new Camera();
 }
 
 // Render loop
 function render() {
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const resolution = settings.renderResolution;
+    const canvasWidth = Math.round(canvasSize[0] * resolution);
+    const canvasHeight = Math.round(canvasSize[1] * resolution);
 
-    if (splats && program && camera) {
-        gl.useProgram(program);
-
-        const viewMatrix = camera.getViewMatrix();
-        const projMatrix = camera.getProjectionMatrix();
-
-        const viewLoc = gl.getUniformLocation(program, 'view');
-        const projLoc = gl.getUniformLocation(program, 'projection');
-        const splatSizeLoc = gl.getUniformLocation(program, 'splatSize');
-
-        gl.uniformMatrix4fv(viewLoc, false, viewMatrix);
-        gl.uniformMatrix4fv(projLoc, false, projMatrix);
-        gl.uniform1f(splatSizeLoc, 1.0);
-
-        gl.bindVertexArray(vao);
-        gl.drawArrays(gl.POINTS, 0, indexCount);
-
-        sortSplats();
+    if (gl.canvas.width !== canvasWidth || gl.canvas.height !== canvasHeight) {
+        gl.canvas.width = canvasWidth;
+        gl.canvas.height = canvasHeight;
     }
 
-    requestAnimationFrame(render);
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(program);
+
+    if (camera) camera.update();
+
+    if (splats && program && camera) {
+        // Set uniforms
+        const W = gl.canvas.width;
+        const H = gl.canvas.height;
+        const tan_fovy = Math.tan(camera.fov_y * 0.5);
+        const tan_fovx = tan_fovy * W / H;
+        const focal_y = H / (2 * tan_fovy);
+        const focal_x = W / (2 * tan_fovx);
+
+        gl.uniform1f(gl.getUniformLocation(program, 'W'), W);
+        gl.uniform1f(gl.getUniformLocation(program, 'H'), H);
+        gl.uniform1f(gl.getUniformLocation(program, 'focal_x'), focal_x);
+        gl.uniform1f(gl.getUniformLocation(program, 'focal_y'), focal_y);
+        gl.uniform1f(gl.getUniformLocation(program, 'tan_fovx'), tan_fovx);
+        gl.uniform1f(gl.getUniformLocation(program, 'tan_fovy'), tan_fovy);
+        gl.uniform1f(gl.getUniformLocation(program, 'scale_modifier'), settings.scalingModifier);
+        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'projmatrix'), false, camera.projMatrix);
+        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'viewmatrix'), false, camera.viewMatrix);
+        gl.uniform1i(gl.getUniformLocation(program, 'show_depth_map'), settings.debugDepth);
+
+        // Draw instanced
+        gl.bindVertexArray(vao);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, indexCount);
+    }
+
+    renderFrameRequest = requestAnimationFrame(render);
 }
 
 // Handle canvas resize
 function onWindowResize() {
-    CONFIG.canvas.width = window.innerWidth;
-    CONFIG.canvas.height = window.innerHeight;
-    gl.viewport(0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
-    if (camera) {
-        camera.setAspectRatio(CONFIG.canvas.width / CONFIG.canvas.height);
-    }
+    canvasSize = [window.innerWidth, window.innerHeight];
+    if (camera) camera.setAspectRatio(canvasSize[0] / canvasSize[1]);
 }
 
 window.addEventListener('resize', onWindowResize);
 
+// Create demo data
+function createDemoData() {
+    const vertexCount = 10000;
+    const positions = new Float32Array(vertexCount * 3);
+    const colors = new Float32Array(vertexCount * 3);
+    const opacities = new Float32Array(vertexCount);
+    const cov3Ds = new Float32Array(vertexCount * 6);
+
+    sceneMin = [0, 0, 0];
+    sceneMax = [2, 2, 2];
+
+    for (let i = 0; i < vertexCount; i++) {
+        // Random points in a sphere
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.random() * Math.PI;
+        const r = Math.random() * 1;
+
+        positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[i * 3 + 2] = r * Math.cos(phi);
+
+        colors[i * 3 + 0] = Math.random();
+        colors[i * 3 + 1] = Math.random();
+        colors[i * 3 + 2] = Math.random();
+
+        opacities[i] = Math.random() * 0.8 + 0.2;
+
+        for (let j = 0; j < 6; j++) {
+            cov3Ds[i * 6 + j] = 0.1 + Math.random() * 0.1;
+        }
+    }
+
+    return {
+        positions,
+        colors,
+        opacities,
+        cov3Ds,
+        vertexCount
+    };
+}
+
 // Main initialization
 async function main() {
-    // Set canvas size
-    CONFIG.canvas.width = window.innerWidth;
-    CONFIG.canvas.height = window.innerHeight;
+    canvasSize = [window.innerWidth, window.innerHeight];
+    CONFIG.canvas = document.getElementById('canvas');
+    CONFIG.canvas.width = canvasSize[0];
+    CONFIG.canvas.height = canvasSize[1];
 
-    // Initialize WebGL
     if (!initWebGL()) {
         document.getElementById('status').textContent = 'WebGL2 not supported';
         return;
     }
 
-    // Load shaders
     if (!await loadShaders()) {
         document.getElementById('status').textContent = 'Shader error';
         return;
     }
 
-    // Try to load PLY file, fallback to demo data
     try {
         splats = await loadPLY(CONFIG.plyFile);
-        document.getElementById('status').textContent = `Loaded ${indexCount} splats from PLY`;
+        document.getElementById('status').textContent = `Loaded ${splats.vertexCount} splats`;
     } catch (error) {
-        console.warn('PLY file not found, using demo data:', error);
+        console.warn('PLY not found, using demo:', error);
         splats = createDemoData();
         document.getElementById('status').textContent = `Demo: ${splats.vertexCount} splats`;
     }
@@ -264,9 +268,7 @@ async function main() {
     setupCamera();
     document.getElementById('loading').classList.remove('active');
 
-    // Start render loop
     render();
 }
 
-// Start application
-main();
+window.onload = main;
