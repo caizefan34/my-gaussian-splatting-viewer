@@ -1,6 +1,6 @@
 // Configuration
 const CONFIG = {
-    plyFile: './assets/model.ply', // Change this to your PLY file path
+    plyFile: './asset/point_cloud.ply', // Change this to your PLY file path
     canvas: document.getElementById('canvas'),
     vertexShaderPath: './shaders/splat_vertex.glsl',
     fragmentShaderPath: './shaders/splat_fragment.glsl',
