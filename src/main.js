@@ -1,6 +1,6 @@
 // Configuration
 const CONFIG = {
-    plyFile: './asset/point_cloud.ply', // Change this to your PLY file path
+    plyFile: './assets/model.ply', // PLY 文件路径
     canvas: document.getElementById('canvas'),
     vertexShaderPath: './shaders/splat_vertex.glsl',
     fragmentShaderPath: './shaders/splat_fragment.glsl',
@@ -33,23 +33,28 @@ function initWebGL() {
 
 // Load shaders
 async function loadShaders() {
-    const vertexSource = await fetch(CONFIG.vertexShaderPath).then(r => r.text());
-    const fragmentSource = await fetch(CONFIG.fragmentShaderPath).then(r => r.text());
+    try {
+        const vertexSource = await fetch(CONFIG.vertexShaderPath).then(r => r.text());
+        const fragmentSource = await fetch(CONFIG.fragmentShaderPath).then(r => r.text());
 
-    const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
-    const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+        const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
 
-    program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
+        program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
 
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error('Program link error:', gl.getProgramInfoLog(program));
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Program link error:', gl.getProgramInfoLog(program));
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error loading shaders:', error);
         return false;
     }
-
-    return true;
 }
 
 function createShader(type, source) {
@@ -63,6 +68,43 @@ function createShader(type, source) {
     }
 
     return shader;
+}
+
+// Create demo data (colorful point cloud)
+function createDemoData() {
+    const vertexCount = 50000;
+    const positions = new Float32Array(vertexCount * 3);
+    const colors = new Uint8Array(vertexCount * 4);
+    const covariances = new Float32Array(vertexCount * 3);
+
+    for (let i = 0; i < vertexCount; i++) {
+        // Random points in a sphere
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.random() * Math.PI;
+        const r = Math.random() * 2;
+
+        positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[i * 3 + 2] = r * Math.cos(phi);
+
+        // Random colors
+        colors[i * 4 + 0] = Math.random() * 255;
+        colors[i * 4 + 1] = Math.random() * 255;
+        colors[i * 4 + 2] = Math.random() * 255;
+        colors[i * 4 + 3] = 255;
+
+        // Random covariance
+        covariances[i * 3 + 0] = 0.1 + Math.random() * 0.1;
+        covariances[i * 3 + 1] = 0.1 + Math.random() * 0.1;
+        covariances[i * 3 + 2] = 0.1 + Math.random() * 0.1;
+    }
+
+    return {
+        positions,
+        colors,
+        covariances,
+        vertexCount,
+    };
 }
 
 // Setup camera
@@ -208,18 +250,19 @@ async function main() {
         return;
     }
 
-    // Load PLY file
+    // Try to load PLY file, fallback to demo data
     try {
         splats = await loadPLY(CONFIG.plyFile);
-        setupBuffers();
-        setupCamera();
-        document.getElementById('loading').classList.remove('active');
-        document.getElementById('status').textContent = `Loaded ${indexCount} splats`;
+        document.getElementById('status').textContent = `Loaded ${indexCount} splats from PLY`;
     } catch (error) {
-        console.error('Error loading PLY:', error);
-        document.getElementById('status').textContent = 'Error loading model';
-        return;
+        console.warn('PLY file not found, using demo data:', error);
+        splats = createDemoData();
+        document.getElementById('status').textContent = `Demo: ${splats.vertexCount} splats`;
     }
+
+    setupBuffers();
+    setupCamera();
+    document.getElementById('loading').classList.remove('active');
 
     // Start render loop
     render();
