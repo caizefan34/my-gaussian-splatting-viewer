@@ -1,0 +1,18 @@
+{
+  "name": "my-gaussian-splatting-viewer",
+  "version": "1.0.0",
+  "description": "3D Gaussian Splatting Viewer - Load and render PLY files in WebGL",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server -p 8000 -c-1",
+    "dev": "npx http-server -p 8000 -c-1"
+  },
+  "keywords": [
+    "gaussian-splatting",
+    "webgl",
+    "3d-rendering",
+    "ply"
+  ],
+  "author": "",
+  "license": "MIT"
+}
