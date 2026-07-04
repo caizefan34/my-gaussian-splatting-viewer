@@ -19,4 +19,4 @@ Thumbs.db
 *.zip
 
 # Allow PLY files in asset/
-!asset/*.ply
+!assets/*.ply
