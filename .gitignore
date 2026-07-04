@@ -17,3 +17,6 @@ Thumbs.db
 # Large files
 *.ply
 *.zip
+
+# Allow PLY files in asset/
+!asset/*.ply
