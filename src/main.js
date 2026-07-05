@@ -1,223 +1,183 @@
-﻿// High-quality 3D Gaussian Splatting Viewer
+﻿// 3D Gaussian Splatting Viewer
 // Based on: https://github.com/kishimisu/Gaussian-Splatting-WebGL
 
 let gl, program;
-let camera;
-let splats = null;
+let cam = null;
 let vao;
-let indexCount = 0;
 let canvasSize = [0, 0];
 let renderFrameRequest = null;
-let renderTimeout = null;
+let indexCount = 0;
+let splats = null;
+
 
 const settings = {
     renderResolution: 1.0,
     maxGaussians: 1000000,
     scalingModifier: 1.0,
-    bgColor: '#000000',
-    fov: 47,
     debugDepth: false
 };
 
 const CONFIG = {
     splatFile: './assets/model.splat',
-    plyFile: './assets/point_cloud.ply',
-    canvas: null
+    plyFile: './assets/point_cloud.ply'
 };
 
-// Initialize WebGL
 function initWebGL() {
-    CONFIG.canvas = document.getElementById('canvas');
-    gl = CONFIG.canvas.getContext('webgl2', { antialias: true, alpha: false });
-    
+    const canvas = document.getElementById('canvas');
+    canvasSize = [window.innerWidth, window.innerHeight];
+
+    gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
     if (!gl) {
-        console.error('WebGL2 not supported');
-        alert('WebGL2 is not supported in your browser!');
+        document.getElementById('status').textContent = 'WebGL2 not supported';
         return false;
     }
 
-    // Set canvas size first
-    CONFIG.canvas.width = canvasSize[0];
-    CONFIG.canvas.height = canvasSize[1];
-
-    gl.viewport(0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
+    canvas.width = canvasSize[0];
+    canvas.height = canvasSize[1];
+    gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 1);
-    
-    // Set blending mode for proper Gaussian splatting - PREMULTIPLIED ALPHA
     gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-    console.log('WebGL2 initialized successfully');
     return true;
-}
-
-// Load and compile shaders
-async function loadShaders() {
-    try {
-        const vertexResponse = await fetch('./shaders/splat_vertex.glsl');
-        const fragmentResponse = await fetch('./shaders/splat_fragment.glsl');
-        
-        if (!vertexResponse.ok || !fragmentResponse.ok) {
-            throw new Error(`Shader fetch failed: vertex ${vertexResponse.status}, fragment ${fragmentResponse.status}`);
-        }
-
-        const vertexSource = await vertexResponse.text();
-        const fragmentSource = await fragmentResponse.text();
-
-        program = createProgram(vertexSource, fragmentSource);
-        
-        if (!program) {
-            console.error('Failed to create shader program');
-            return false;
-        }
-        
-        console.log('Shaders loaded successfully');
-        return true;
-    } catch (error) {
-        console.error('Error loading shaders:', error);
-        alert('Error loading shaders: ' + error.message);
-        return false;
-    }
-}
-
-function createProgram(vertexSource, fragmentSource) {
-    const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
-    const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
-
-    if (!vertexShader || !fragmentShader) return null;
-
-    const program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error('Program link error:', gl.getProgramInfoLog(program));
-        return null;
-    }
-
-    return program;
 }
 
 function createShader(type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
-
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        const error = gl.getShaderInfoLog(shader);
-        console.error('Shader compile error:', error);
-        console.error('Shader type:', type === gl.VERTEX_SHADER ? 'VERTEX' : 'FRAGMENT');
+        console.error('Shader compile error:', gl.getShaderInfoLog(shader));
         return null;
     }
-
     return shader;
 }
 
-// Setup WebGL buffers
-function setupBuffers() {
-    if (!splats) {
-        console.error('No splats data to setup');
-        return;
+function createProgram(vertSrc, fragSrc) {
+    const vs = createShader(gl.VERTEX_SHADER, vertSrc);
+    const fs = createShader(gl.FRAGMENT_SHADER, fragSrc);
+    if (!vs || !fs) return null;
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error('Program link error:', gl.getProgramInfoLog(prog));
+        return null;
     }
+    return prog;
+}
+
+async function loadShaders() {
+    const vertResp = await fetch('./shaders/splat_vertex.glsl');
+    const fragResp = await fetch('./shaders/splat_fragment.glsl');
+    const vertSrc = await vertResp.text();
+    const fragSrc = await fragResp.text();
+    program = createProgram(vertSrc, fragSrc);
+    return program != null;
+}
+
+function setupBuffers() {
+    if (!splats) return;
 
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
 
-    const setupBuffer = (name, data, components) => {
-        const buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    const setupAttr = (name, data, components) => {
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-        
-        const location = gl.getAttribLocation(program, name);
-        if (location === -1) {
-            console.warn(`Attribute ${name} not found in shader`);
-            return buffer;
+        const loc = gl.getAttribLocation(program, name);
+        if (loc >= 0) {
+            gl.enableVertexAttribArray(loc);
+            gl.vertexAttribPointer(loc, components, gl.FLOAT, false, 0, 0);
+            gl.vertexAttribDivisor(loc, 1);
         }
-        
-        gl.enableVertexAttribArray(location);
-        gl.vertexAttribPointer(location, components, gl.FLOAT, false, 0, 0);
-        gl.vertexAttribDivisor(location, 1);
-        return buffer;
+        return buf;
     };
 
-    // Setup position buffer
-    setupBuffer('a_center', new Float32Array(splats.positions), 3);
-    
-    // Setup color buffer
-    setupBuffer('a_col', new Float32Array(splats.colors), 3);
-    
-    // Setup opacity buffer
-    setupBuffer('a_opacity', new Float32Array(splats.opacities), 1);
-    
-    // Setup covariance buffers
-    const cov3Ds = new Float32Array(splats.cov3Ds);
+    setupAttr('a_center', new Float32Array(splats.positions), 3);
+    setupAttr('a_col', new Float32Array(splats.colors), 3);
+    setupAttr('a_opacity', new Float32Array(splats.opacities), 1);
+
+    const covData = new Float32Array(splats.cov3Ds);
     const covA = new Float32Array(splats.vertexCount * 3);
     const covB = new Float32Array(splats.vertexCount * 3);
-    
     for (let i = 0; i < splats.vertexCount; i++) {
-        covA[i * 3 + 0] = cov3Ds[i * 6 + 0];
-        covA[i * 3 + 1] = cov3Ds[i * 6 + 1];
-        covA[i * 3 + 2] = cov3Ds[i * 6 + 2];
-        
-        covB[i * 3 + 0] = cov3Ds[i * 6 + 3];
-        covB[i * 3 + 1] = cov3Ds[i * 6 + 4];
-        covB[i * 3 + 2] = cov3Ds[i * 6 + 5];
+        covA[i * 3] = covData[i * 6];
+        covA[i * 3 + 1] = covData[i * 6 + 1];
+        covA[i * 3 + 2] = covData[i * 6 + 2];
+        covB[i * 3] = covData[i * 6 + 3];
+        covB[i * 3 + 1] = covData[i * 6 + 4];
+        covB[i * 3 + 2] = covData[i * 6 + 5];
     }
-    
-    setupBuffer('a_covA', covA, 3);
-    setupBuffer('a_covB', covB, 3);
+    setupAttr('a_covA', covA, 3);
+    setupAttr('a_covB', covB, 3);
 
     indexCount = Math.min(splats.vertexCount, settings.maxGaussians);
-    console.log(`Buffers setup with ${indexCount} gaussians`);
 }
 
-// Setup camera
 function setupCamera() {
-    camera = new Camera(canvasSize[0], canvasSize[1]);
-    
-    // Calculate initial camera distance based on scene bounds
-    if (splats) {
-        const bounds = [
+    cam = new Camera(canvasSize[0], canvasSize[1]);
+
+    if (window.sceneMin && window.sceneMax) {
+        const cx = (window.sceneMin[0] + window.sceneMax[0]) / 2;
+        const cy = (window.sceneMin[1] + window.sceneMax[1]) / 2;
+        const cz = (window.sceneMin[2] + window.sceneMax[2]) / 2;
+        const maxBound = Math.max(
             window.sceneMax[0] - window.sceneMin[0],
             window.sceneMax[1] - window.sceneMin[1],
             window.sceneMax[2] - window.sceneMin[2]
-        ];
-        const maxBound = Math.max(...bounds);
-        camera.distance = maxBound * 1.5;
-        camera.updatePosition();
+        );
+        cam.target = [cx, cy, cz];
+        cam.radius = maxBound * 1.5;
+        cam.phi = Math.PI / 2.2;
+        cam.theta = -Math.PI / 2;
+        cam.updatePosition();
     }
-    
-    console.log('Camera initialized');
+
+    setupMouseControls();
 }
 
-// Render loop
+function setupMouseControls() {
+    let isDragging = false, lastX = 0, lastY = 0;
+
+    document.addEventListener('mousedown', (e) => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+    document.addEventListener('mousemove', (e) => {
+        if (isDragging && cam) {
+            cam.rotate(e.movementX * 0.005, e.movementY * 0.005);
+        }
+    });
+    document.addEventListener('mouseup', () => { isDragging = false; });
+    document.addEventListener('mouseleave', () => { isDragging = false; });
+    document.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        if (cam) cam.zoom(e.deltaY * 0.01);
+    }, { passive: false });
+}
+
 function render() {
-    if (!gl || !program || !camera || !splats) {
-        return;
-    }
+    if (!gl || !program || !cam || !splats) return;
 
-    const resolution = settings.renderResolution;
-    const canvasWidth = Math.round(canvasSize[0] * resolution);
-    const canvasHeight = Math.round(canvasSize[1] * resolution);
+    const w = Math.round(canvasSize[0] * settings.renderResolution);
+    const h = Math.round(canvasSize[1] * settings.renderResolution);
 
-    if (gl.canvas.width !== canvasWidth || gl.canvas.height !== canvasHeight) {
-        gl.canvas.width = canvasWidth;
-        gl.canvas.height = canvasHeight;
-        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    if (gl.canvas.width !== w || gl.canvas.height !== h) {
+        gl.canvas.width = w;
+        gl.canvas.height = h;
+        gl.viewport(0, 0, w, h);
     }
 
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(program);
 
-    camera.update();
+    cam.update();
 
-    // Set uniforms
     const W = gl.canvas.width;
     const H = gl.canvas.height;
-    const tan_fovy = Math.tan(camera.fov_y * 0.5);
+    const tan_fovy = Math.tan(cam.fov_y * 0.5);
     const tan_fovx = tan_fovy * W / H;
     const focal_y = H / (2 * tan_fovy);
     const focal_x = W / (2 * tan_fovx);
@@ -229,28 +189,27 @@ function render() {
     gl.uniform1f(gl.getUniformLocation(program, 'tan_fovx'), tan_fovx);
     gl.uniform1f(gl.getUniformLocation(program, 'tan_fovy'), tan_fovy);
     gl.uniform1f(gl.getUniformLocation(program, 'scale_modifier'), settings.scalingModifier);
-    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'projmatrix'), false, camera.projMatrix);
-    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'viewmatrix'), false, camera.viewMatrix);
-    gl.uniform1i(gl.getUniformLocation(program, 'show_depth_map'), settings.debugDepth ? 1 : 0);
 
-    // Draw instanced
+    if (window.sceneMin && window.sceneMax) {
+        gl.uniform3fv(gl.getUniformLocation(program, 'boxmin'), new Float32Array(window.sceneMin));
+        gl.uniform3fv(gl.getUniformLocation(program, 'boxmax'), new Float32Array(window.sceneMax));
+    }
+
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'projmatrix'), false, cam.vpm);
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'viewmatrix'), false, cam.vm);
+
     gl.bindVertexArray(vao);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, indexCount);
 
     renderFrameRequest = requestAnimationFrame(render);
 }
 
-// Handle canvas resize
 function onWindowResize() {
     canvasSize = [window.innerWidth, window.innerHeight];
-    if (camera) {
-        camera.setAspectRatio(canvasSize[0] / canvasSize[1]);
-    }
+    if (cam) cam.setAspectRatio(canvasSize[0] / canvasSize[1]);
 }
-
 window.addEventListener('resize', onWindowResize);
 
-// Create demo data
 function createDemoData() {
     const vertexCount = 10000;
     const positions = new Float32Array(vertexCount * 3);
@@ -258,115 +217,74 @@ function createDemoData() {
     const opacities = new Float32Array(vertexCount);
     const cov3Ds = new Float32Array(vertexCount * 6);
 
-    window.sceneMin = [0, 0, 0];
-    window.sceneMax = [2, 2, 2];
+    window.sceneMin = [-1, -1, -1];
+    window.sceneMax = [1, 1, 1];
 
     for (let i = 0; i < vertexCount; i++) {
-        // Random points in a sphere
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.random() * Math.PI;
         const r = Math.random() * 1;
-
-        positions[i * 3 + 0] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
         positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
         positions[i * 3 + 2] = r * Math.cos(phi);
-
-        colors[i * 3 + 0] = Math.random();
+        colors[i * 3] = Math.random();
         colors[i * 3 + 1] = Math.random();
         colors[i * 3 + 2] = Math.random();
-
         opacities[i] = Math.random() * 0.8 + 0.2;
-
-        for (let j = 0; j < 6; j++) {
-            cov3Ds[i * 6 + j] = 0.1 + Math.random() * 0.1;
-        }
+        const s = 0.02 + Math.random() * 0.03;
+        cov3Ds[i * 6] = s;
+        cov3Ds[i * 6 + 1] = 0;
+        cov3Ds[i * 6 + 2] = s;
+        cov3Ds[i * 6 + 3] = s;
+        cov3Ds[i * 6 + 4] = 0;
+        cov3Ds[i * 6 + 5] = 0;
     }
-
-    console.log('Demo data created');
-    return {
-        positions,
-        colors,
-        opacities,
-        cov3Ds,
-        vertexCount
-    };
+    return { positions, colors, opacities, cov3Ds, vertexCount };
 }
 
-// Mouse controls
-let mouseDown = false;
-let lastX = 0;
-let lastY = 0;
-
-document.addEventListener('mousedown', (e) => {
-    mouseDown = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-});
-
-document.addEventListener('mousemove', (e) => {
-    if (mouseDown && camera) {
-        const deltaX = e.clientX - lastX;
-        const deltaY = e.clientY - lastY;
-        
-        camera.rotate(deltaX * 0.005, deltaY * 0.005);
-        
-        lastX = e.clientX;
-        lastY = e.clientY;
-    }
-});
-
-document.addEventListener('mouseup', () => {
-    mouseDown = false;
-});
-
-document.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    if (camera) {
-        const zoomSpeed = 1.1;
-        const factor = e.deltaY > 0 ? zoomSpeed : 1 / zoomSpeed;
-        camera.zoom(factor);
-    }
-}, { passive: false });
-
-// Main initialization
 async function main() {
-    console.log('Starting initialization...');
-    
-    canvasSize = [window.innerWidth, window.innerHeight];
-    CONFIG.canvas = document.getElementById('canvas');
-    
-    if (!CONFIG.canvas) {
-        console.error('Canvas element not found');
-        alert('Canvas element not found in HTML');
-        return;
-    }
-
-    if (!initWebGL()) {
-        document.getElementById('status').textContent = 'WebGL2 not supported';
-        return;
-    }
+    if (!initWebGL()) return;
 
     if (!await loadShaders()) {
         document.getElementById('status').textContent = 'Shader error';
         return;
     }
 
+    const setStatus = (msg) => {
+        const el = document.getElementById('status');
+        if (el) el.textContent = msg;
+    };
+
     try {
-        splats = await loadSplat(CONFIG.splatFile);
-        document.getElementById('status').textContent = `Loaded ${splats.vertexCount} splats`;
-    } catch (error) {
-        console.warn('PLY not found, using demo:', error);
-        splats = createDemoData();
-        document.getElementById('status').textContent = `Demo: ${splats.vertexCount} splats`;
+        splats = await loadSplat(CONFIG.splatFile, (step, current, total) => {
+            const pct = total ? Math.round(current / total * 100) : 0;
+            setStatus('Loading: ' + pct + '%');
+        });
+        setStatus('Loaded ' + splats.vertexCount + ' splats');
+    } catch (e) {
+        console.warn('Loading failed:', e);
+        try {
+            splats = await loadPLY(CONFIG.plyFile, (step, current, total) => {
+                const pct = total ? Math.round(current / total * 100) : 0;
+                setStatus('Loading PLY: ' + pct + '%');
+            });
+            setStatus('Loaded ' + splats.vertexCount + ' splats');
+        } catch (e2) {
+            console.warn('PLY also failed:', e2);
+            splats = createDemoData();
+            setStatus('Demo: ' + splats.vertexCount + ' splats');
+        }
     }
 
     setupBuffers();
     setupCamera();
-    document.getElementById('loading').classList.remove('active');
 
-    console.log('Initialization complete, starting render loop');
+    const loading = document.getElementById('loading');
+    if (loading) loading.classList.remove('active');
+
     render();
 }
 
 window.onload = main;
+
 

@@ -1,6 +1,9 @@
 ﻿/**
- * Camera for 3D Gaussian Splatting - Column-major matrices (WebGL compatible)
+ * Camera for 3D Gaussian Splatting
+ * Based on: https://github.com/kishimisu/Gaussian-Splatting-WebGL
  */
+
+const { mat4, vec3 } = glMatrix;
 
 class Camera {
     constructor(width, height) {
@@ -8,46 +11,42 @@ class Camera {
         this.height = height || window.innerHeight;
         this.aspectRatio = this.width / this.height;
 
-        this.position = [0, 0, 3];
         this.target = [0, 0, 0];
         this.up = [0, 1, 0];
-        this.fov = Math.PI / 4;
-        this.fov_y = this.fov;
-        this.near = 0.1;
-        this.far = 1000;
+        this.theta = -Math.PI / 2;
+        this.phi = Math.PI / 2;
+        this.radius = 5;
+        this.fov_y = 0.820176;
 
-        this.phi = 0;
-        this.theta = 0;
-        this.distance = 3;
+        this.position = vec3.create();
+        this.viewMatrix = mat4.create();
+        this.projMatrix = mat4.create();
+        this.vm = mat4.create();
+        this.vpm = mat4.create();
 
-        this.viewMatrix = new Float32Array(16);
-        this.projMatrix = new Float32Array(16);
-        this.updateMatrices();
+        this.updatePosition();
     }
 
     rotate(deltaTheta, deltaPhi) {
-        this.theta += deltaTheta;
-        this.phi += deltaPhi;
-        this.phi = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, this.phi));
+        this.theta -= deltaTheta;
+        this.phi = Math.max(1e-6, Math.min(Math.PI - 1e-6, this.phi + deltaPhi));
         this.updatePosition();
     }
 
     zoom(factor) {
-        this.distance *= factor;
-        this.distance = Math.max(0.1, Math.min(100, this.distance));
+        this.radius = Math.max(0.5, this.radius + factor);
         this.updatePosition();
     }
 
     updatePosition() {
-        this.position[0] = this.distance * Math.sin(this.theta) * Math.cos(this.phi);
-        this.position[1] = this.distance * Math.sin(this.phi);
-        this.position[2] = this.distance * Math.cos(this.theta) * Math.cos(this.phi);
+        this.position[0] = this.target[0] + this.radius * Math.sin(this.phi) * Math.cos(this.theta);
+        this.position[1] = this.target[1] + this.radius * Math.cos(this.phi);
+        this.position[2] = this.target[2] + this.radius * Math.sin(this.phi) * Math.sin(this.theta);
         this.updateMatrices();
     }
 
     setAspectRatio(ratio) {
         this.aspectRatio = ratio;
-        this.updateMatrices();
     }
 
     update() {
@@ -55,67 +54,24 @@ class Camera {
     }
 
     updateMatrices() {
-        this.viewMatrix = this.getViewMatrix();
-        this.projMatrix = this.getProjectionMatrix();
-    }
+        mat4.lookAt(this.viewMatrix, this.position, this.target, this.up);
+        mat4.perspective(this.projMatrix, this.fov_y, this.aspectRatio, 0.1, 100);
 
-    // Column-major view matrix (WebGL standard)
-    getViewMatrix() {
-        var eye = this.position;
-        var center = this.target;
-        var up = this.up;
+        mat4.copy(this.vm, this.viewMatrix);
+        mat4.multiply(this.vpm, this.projMatrix, this.viewMatrix);
 
-        var f = [center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]];
-        var fLen = Math.hypot(f[0], f[1], f[2]);
-        if (fLen > 0) { f[0] /= fLen; f[1] /= fLen; f[2] /= fLen; }
+        // Apply sign flips as in the original SIBR implementation
+        const invertRow = (mat, row) => {
+            mat[row + 0] = -mat[row + 0];
+            mat[row + 4] = -mat[row + 4];
+            mat[row + 8] = -mat[row + 8];
+            mat[row + 12] = -mat[row + 12];
+        };
 
-        var s = [
-            f[1] * up[2] - f[2] * up[1],
-            f[2] * up[0] - f[0] * up[2],
-            f[0] * up[1] - f[1] * up[0]
-        ];
-        var sLen = Math.hypot(s[0], s[1], s[2]);
-        if (sLen > 0) { s[0] /= sLen; s[1] /= sLen; s[2] /= sLen; }
-
-        var u = [
-            s[1] * f[2] - s[2] * f[1],
-            s[2] * f[0] - s[0] * f[2],
-            s[0] * f[1] - s[1] * f[0]
-        ];
-
-        var dotSE = s[0]*eye[0] + s[1]*eye[1] + s[2]*eye[2];
-        var dotUE = u[0]*eye[0] + u[1]*eye[1] + u[2]*eye[2];
-        var dotFE = f[0]*eye[0] + f[1]*eye[1] + f[2]*eye[2];
-
-        var result = new Float32Array(16);
-        // Column 0: s
-        result[0] = s[0]; result[1] = s[1]; result[2] = s[2]; result[3] = 0;
-        // Column 1: u
-        result[4] = u[0]; result[5] = u[1]; result[6] = u[2]; result[7] = 0;
-        // Column 2: -f
-        result[8] = -f[0]; result[9] = -f[1]; result[10] = -f[2]; result[11] = 0;
-        // Column 3: translation
-        result[12] = -dotSE; result[13] = -dotUE; result[14] = dotFE; result[15] = 1;
-
-        return result;
-    }
-
-    // Column-major projection matrix (WebGL standard)
-    getProjectionMatrix() {
-        var fov = this.fov;
-        var aspect = this.aspectRatio;
-        var near = this.near;
-        var far = this.far;
-
-        var f = 1.0 / Math.tan(fov / 2.0);
-        var nf = 1.0 / (near - far);
-
-        var result = new Float32Array(16);
-        result[0] = f / aspect; result[1] = 0; result[2] = 0; result[3] = 0;
-        result[4] = 0; result[5] = f; result[6] = 0; result[7] = 0;
-        result[8] = 0; result[9] = 0; result[10] = (far + near) * nf; result[11] = -1;
-        result[12] = 0; result[13] = 0; result[14] = 2 * far * near * nf; result[15] = 0;
-
-        return result;
+        invertRow(this.vm, 1);
+        invertRow(this.vm, 2);
+        invertRow(this.vpm, 1);
+        invertRow(this.vm, 0);
+        invertRow(this.vpm, 0);
     }
 }
