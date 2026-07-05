@@ -28,7 +28,7 @@ void main() {
         discard;
     }
 
-    // Apply scale modifier
+    // Apply scale modifier correctly
     power *= scale_modif;
 
     // Eq. (2) from 3D Gaussian splatting paper: compute alpha
@@ -38,6 +38,9 @@ void main() {
         discard;
     }
 
-    // Eq. (3) from 3D Gaussian splatting paper: front-to-back blending
-    fragColor = vec4(col * alpha, alpha);
+    // Ensure color is properly clamped
+    vec3 finalColor = clamp(col, 0.0, 1.0);
+    
+    // Eq. (3) from 3D Gaussian splatting paper: front-to-back blending (premultiplied alpha)
+    fragColor = vec4(finalColor * alpha, alpha);
 }

@@ -75,17 +75,17 @@ float ndc2Pix(float v, float S) {
 void main() {
     vec3 p_orig = a_center;
 
+    // Perform near culling with relaxed threshold
+    vec4 p_view = viewmatrix * vec4(p_orig, 1.0);
+    if (p_view.z <= 0.1) {
+        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     // Transform point by projection
     vec4 p_hom = projmatrix * vec4(p_orig, 1.0);
     float p_w = 1.0 / (p_hom.w + 1e-7);
     vec3 p_proj = p_hom.xyz * p_w;
-
-    // Perform near culling
-    vec4 p_view = viewmatrix * vec4(p_orig, 1.0);
-    if (p_view.z <= 0.4) {
-        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
 
     // Compute 2D screen-space covariance matrix
     vec3 cov = computeCov2D(p_orig, focal_x, focal_y, tan_fovx, tan_fovy, a_covA, a_covB, viewmatrix);
@@ -108,7 +108,7 @@ void main() {
 
     // Apply scale modifier
     my_radius *= 0.15 + scale_modifier * 0.85;
-    scale_modif = 1.0 / scale_modifier;
+    scale_modif = 1.0 / max(scale_modifier, 0.0001);
 
     // Convert gl_VertexID to quad corners: [-1,-1],[1,-1],[-1,1],[1,1]
     vec2 corner = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2) - 1.0;

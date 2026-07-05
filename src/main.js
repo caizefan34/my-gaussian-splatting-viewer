@@ -27,34 +27,55 @@ const CONFIG = {
 // Initialize WebGL
 function initWebGL() {
     CONFIG.canvas = document.getElementById('canvas');
-    gl = CONFIG.canvas.getContext('webgl2');
+    gl = CONFIG.canvas.getContext('webgl2', { antialias: true, alpha: false });
     
     if (!gl) {
         console.error('WebGL2 not supported');
+        alert('WebGL2 is not supported in your browser!');
         return false;
     }
+
+    // Set canvas size first
+    CONFIG.canvas.width = canvasSize[0];
+    CONFIG.canvas.height = canvasSize[1];
 
     gl.viewport(0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
     gl.clearColor(0, 0, 0, 1);
     
-    // Set blending mode for proper Gaussian splatting
+    // Set blending mode for proper Gaussian splatting - PREMULTIPLIED ALPHA
     gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE_MINUS_DST_ALPHA, gl.ONE);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
+    console.log('WebGL2 initialized successfully');
     return true;
 }
 
 // Load and compile shaders
 async function loadShaders() {
     try {
-        const vertexSource = await fetch('./shaders/splat_vertex.glsl').then(r => r.text());
-        const fragmentSource = await fetch('./shaders/splat_fragment.glsl').then(r => r.text());
+        const vertexResponse = await fetch('./shaders/splat_vertex.glsl');
+        const fragmentResponse = await fetch('./shaders/splat_fragment.glsl');
+        
+        if (!vertexResponse.ok || !fragmentResponse.ok) {
+            throw new Error(`Shader fetch failed: vertex ${vertexResponse.status}, fragment ${fragmentResponse.status}`);
+        }
+
+        const vertexSource = await vertexResponse.text();
+        const fragmentSource = await fragmentResponse.text();
 
         program = createProgram(vertexSource, fragmentSource);
-        return program != null;
+        
+        if (!program) {
+            console.error('Failed to create shader program');
+            return false;
+        }
+        
+        console.log('Shaders loaded successfully');
+        return true;
     } catch (error) {
         console.error('Error loading shaders:', error);
+        alert('Error loading shaders: ' + error.message);
         return false;
     }
 }
@@ -84,7 +105,9 @@ function createShader(type, source) {
     gl.compileShader(shader);
 
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+        const error = gl.getShaderInfoLog(shader);
+        console.error('Shader compile error:', error);
+        console.error('Shader type:', type === gl.VERTEX_SHADER ? 'VERTEX' : 'FRAGMENT');
         return null;
     }
 
@@ -93,6 +116,11 @@ function createShader(type, source) {
 
 // Setup WebGL buffers
 function setupBuffers() {
+    if (!splats) {
+        console.error('No splats data to setup');
+        return;
+    }
+
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
 
@@ -102,6 +130,11 @@ function setupBuffers() {
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
         
         const location = gl.getAttribLocation(program, name);
+        if (location === -1) {
+            console.warn(`Attribute ${name} not found in shader`);
+            return buffer;
+        }
+        
         gl.enableVertexAttribArray(location);
         gl.vertexAttribPointer(location, components, gl.FLOAT, false, 0, 0);
         gl.vertexAttribDivisor(location, 1);
@@ -136,15 +169,34 @@ function setupBuffers() {
     setupBuffer('a_covB', covB, 3);
 
     indexCount = Math.min(splats.vertexCount, settings.maxGaussians);
+    console.log(`Buffers setup with ${indexCount} gaussians`);
 }
 
 // Setup camera
 function setupCamera() {
-    camera = new Camera();
+    camera = new Camera(canvasSize[0], canvasSize[1]);
+    
+    // Calculate initial camera distance based on scene bounds
+    if (splats) {
+        const bounds = [
+            window.sceneMax[0] - window.sceneMin[0],
+            window.sceneMax[1] - window.sceneMin[1],
+            window.sceneMax[2] - window.sceneMin[2]
+        ];
+        const maxBound = Math.max(...bounds);
+        camera.distance = maxBound * 1.5;
+        camera.updatePosition();
+    }
+    
+    console.log('Camera initialized');
 }
 
 // Render loop
 function render() {
+    if (!gl || !program || !camera || !splats) {
+        return;
+    }
+
     const resolution = settings.renderResolution;
     const canvasWidth = Math.round(canvasSize[0] * resolution);
     const canvasHeight = Math.round(canvasSize[1] * resolution);
@@ -152,39 +204,37 @@ function render() {
     if (gl.canvas.width !== canvasWidth || gl.canvas.height !== canvasHeight) {
         gl.canvas.width = canvasWidth;
         gl.canvas.height = canvasHeight;
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     }
 
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(program);
 
-    if (camera) camera.update();
+    camera.update();
 
-    if (splats && program && camera) {
-        // Set uniforms
-        const W = gl.canvas.width;
-        const H = gl.canvas.height;
-        const tan_fovy = Math.tan(camera.fov_y * 0.5);
-        const tan_fovx = tan_fovy * W / H;
-        const focal_y = H / (2 * tan_fovy);
-        const focal_x = W / (2 * tan_fovx);
+    // Set uniforms
+    const W = gl.canvas.width;
+    const H = gl.canvas.height;
+    const tan_fovy = Math.tan(camera.fov_y * 0.5);
+    const tan_fovx = tan_fovy * W / H;
+    const focal_y = H / (2 * tan_fovy);
+    const focal_x = W / (2 * tan_fovx);
 
-        gl.uniform1f(gl.getUniformLocation(program, 'W'), W);
-        gl.uniform1f(gl.getUniformLocation(program, 'H'), H);
-        gl.uniform1f(gl.getUniformLocation(program, 'focal_x'), focal_x);
-        gl.uniform1f(gl.getUniformLocation(program, 'focal_y'), focal_y);
-        gl.uniform1f(gl.getUniformLocation(program, 'tan_fovx'), tan_fovx);
-        gl.uniform1f(gl.getUniformLocation(program, 'tan_fovy'), tan_fovy);
-        gl.uniform1f(gl.getUniformLocation(program, 'scale_modifier'), settings.scalingModifier);
-        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'projmatrix'), false, camera.projMatrix);
-        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'viewmatrix'), false, camera.viewMatrix);
-        gl.uniform1i(gl.getUniformLocation(program, 'show_depth_map'), settings.debugDepth);
+    gl.uniform1f(gl.getUniformLocation(program, 'W'), W);
+    gl.uniform1f(gl.getUniformLocation(program, 'H'), H);
+    gl.uniform1f(gl.getUniformLocation(program, 'focal_x'), focal_x);
+    gl.uniform1f(gl.getUniformLocation(program, 'focal_y'), focal_y);
+    gl.uniform1f(gl.getUniformLocation(program, 'tan_fovx'), tan_fovx);
+    gl.uniform1f(gl.getUniformLocation(program, 'tan_fovy'), tan_fovy);
+    gl.uniform1f(gl.getUniformLocation(program, 'scale_modifier'), settings.scalingModifier);
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'projmatrix'), false, camera.projMatrix);
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'viewmatrix'), false, camera.viewMatrix);
+    gl.uniform1i(gl.getUniformLocation(program, 'show_depth_map'), settings.debugDepth ? 1 : 0);
 
-        // Draw instanced
-        gl.bindVertexArray(vao);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, indexCount);
-    }
+    // Draw instanced
+    gl.bindVertexArray(vao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, indexCount);
 
     renderFrameRequest = requestAnimationFrame(render);
 }
@@ -192,7 +242,9 @@ function render() {
 // Handle canvas resize
 function onWindowResize() {
     canvasSize = [window.innerWidth, window.innerHeight];
-    if (camera) camera.setAspectRatio(canvasSize[0] / canvasSize[1]);
+    if (camera) {
+        camera.setAspectRatio(canvasSize[0] / canvasSize[1]);
+    }
 }
 
 window.addEventListener('resize', onWindowResize);
@@ -205,8 +257,8 @@ function createDemoData() {
     const opacities = new Float32Array(vertexCount);
     const cov3Ds = new Float32Array(vertexCount * 6);
 
-    sceneMin = [0, 0, 0];
-    sceneMax = [2, 2, 2];
+    window.sceneMin = [0, 0, 0];
+    window.sceneMax = [2, 2, 2];
 
     for (let i = 0; i < vertexCount; i++) {
         // Random points in a sphere
@@ -229,6 +281,7 @@ function createDemoData() {
         }
     }
 
+    console.log('Demo data created');
     return {
         positions,
         colors,
@@ -238,12 +291,54 @@ function createDemoData() {
     };
 }
 
+// Mouse controls
+let mouseDown = false;
+let lastX = 0;
+let lastY = 0;
+
+document.addEventListener('mousedown', (e) => {
+    mouseDown = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (mouseDown && camera) {
+        const deltaX = e.clientX - lastX;
+        const deltaY = e.clientY - lastY;
+        
+        camera.rotate(deltaX * 0.005, deltaY * 0.005);
+        
+        lastX = e.clientX;
+        lastY = e.clientY;
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    mouseDown = false;
+});
+
+document.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (camera) {
+        const zoomSpeed = 1.1;
+        const factor = e.deltaY > 0 ? zoomSpeed : 1 / zoomSpeed;
+        camera.zoom(factor);
+    }
+}, { passive: false });
+
 // Main initialization
 async function main() {
+    console.log('Starting initialization...');
+    
     canvasSize = [window.innerWidth, window.innerHeight];
     CONFIG.canvas = document.getElementById('canvas');
-    CONFIG.canvas.width = canvasSize[0];
-    CONFIG.canvas.height = canvasSize[1];
+    
+    if (!CONFIG.canvas) {
+        console.error('Canvas element not found');
+        alert('Canvas element not found in HTML');
+        return;
+    }
 
     if (!initWebGL()) {
         document.getElementById('status').textContent = 'WebGL2 not supported';
@@ -268,6 +363,7 @@ async function main() {
     setupCamera();
     document.getElementById('loading').classList.remove('active');
 
+    console.log('Initialization complete, starting render loop');
     render();
 }
 
