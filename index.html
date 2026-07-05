@@ -6,14 +6,11 @@
 <title>3D Gaussian Splatting Viewer</title>
 <style>
 *{margin:0;padding:0}
-body{overflow:hidden;background:#000;font-family:sans-serif;color:#fff;height:100vh;width:100vw}
-canvas{display:block;width:100vw;height:100vh;touch-action:none}
-#info{position:absolute;top:10px;left:15px;z-index:100;font-size:14px;text-shadow:0 0 3px #000;pointer-events:none}
+body{overflow:hidden;background:#000;height:100vh;width:100vw}
+iframe{border:none;width:100vw;height:100vh;display:block}
 </style>
 </head>
 <body>
-<div id="info">Initializing...</div>
-<canvas id="c"></canvas>
-<script src="main.js"></script>
+<iframe src="superplat%20editor/point_cloud.html" allow="fullscreen;xr-spatial-tracking;camera;microphone"></iframe>
 </body>
 </html>
