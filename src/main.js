@@ -1,4 +1,4 @@
-// High-quality 3D Gaussian Splatting Viewer
+﻿// High-quality 3D Gaussian Splatting Viewer
 // Based on: https://github.com/kishimisu/Gaussian-Splatting-WebGL
 
 let gl, program;
@@ -20,6 +20,7 @@ const settings = {
 };
 
 const CONFIG = {
+    splatFile: './assets/model.splat',
     plyFile: './assets/point_cloud.ply',
     canvas: null
 };
@@ -351,7 +352,7 @@ async function main() {
     }
 
     try {
-        splats = await loadPLY(CONFIG.plyFile);
+        splats = await loadSplat(CONFIG.splatFile);
         document.getElementById('status').textContent = `Loaded ${splats.vertexCount} splats`;
     } catch (error) {
         console.warn('PLY not found, using demo:', error);
@@ -368,3 +369,4 @@ async function main() {
 }
 
 window.onload = main;
+
