@@ -20,7 +20,7 @@ const settings = {
 };
 
 const CONFIG = {
-    plyFile: './assets/model.ply',
+    plyFile: './assets/point_cloud.ply',
     canvas: null
 };
 
