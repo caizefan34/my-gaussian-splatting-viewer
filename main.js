@@ -1,4 +1,4 @@
-﻿// Proper 3DGS Viewer using .splat with scale+rot → covariance rendering
+// Proper 3DGS Viewer using .splat with scale+rot → covariance rendering
 // Inspired by antimatter15/splat and kishimisu/Gaussian-Splatting-WebGL
 // Minimal gl-matrix mat4 inline (no CDN dependency)
 !function(){var e=Float32Array;function t(e,t){if(e){if(e instanceof e)return e;var n=new e(t);return n.set(t),n}return new e(t||16)}function n(e,n,r){for(var i=0,o=0;o<e.length;o++)i+=e[o]*n[o];return i+=r||0}window.mat4={create:function(n){var r=new e(16);return n&&(r[0]=n[0],r[1]=n[1],r[2]=n[2],r[3]=n[3],r[4]=n[4],r[5]=n[5],r[6]=n[6],r[7]=n[7],r[8]=n[8],r[9]=n[9],r[10]=n[10],r[11]=n[11],r[12]=n[12],r[13]=n[13],r[14]=n[14],r[15]=n[15]),r},identity:function(e){return e[0]=1,e[1]=0,e[2]=0,e[3]=0,e[4]=0,e[5]=1,e[6]=0,e[7]=0,e[8]=0,e[9]=0,e[10]=1,e[11]=0,e[12]=0,e[13]=0,e[14]=0,e[15]=1,e},multiply:function(e,n,r){var i=n[0],o=n[1],a=n[2],u=n[3],c=n[4],f=n[5],l=n[6],s=n[7],h=n[8],d=n[9],p=n[10],v=n[11],g=n[12],y=n[13],m=n[14],b=n[15],x=r[0],w=r[1],k=r[2],A=r[3];return e[0]=x*i+w*c+k*h+A*g,e[1]=x*o+w*f+k*d+A*y,e[2]=x*a+w*l+k*p+A*m,e[3]=x*u+w*s+k*v+A*b,x=r[4],w=r[5],k=r[6],A=r[7],e[4]=x*i+w*c+k*h+A*g,e[5]=x*o+w*f+k*d+A*y,e[6]=x*a+w*l+k*p+A*m,e[7]=x*u+w*s+k*v+A*b,x=r[8],w=r[9],k=r[10],A=r[11],e[8]=x*i+w*c+k*h+A*g,e[9]=x*o+w*f+k*d+A*y,e[10]=x*a+w*l+k*p+A*m,e[11]=x*u+w*s+k*v+A*b,x=r[12],w=r[13],k=r[14],A=r[15],e[12]=x*i+w*c+k*h+A*g,e[13]=x*o+w*f+k*d+A*y,e[14]=x*a+w*l+k*p+A*m,e[15]=x*u+w*s+k*v+A*b,e},perspective:function(e,t,n,r,i){var o=i||null;if(void 0!==o){var a=1/Math.tan(t/2);e[0]=a/n,e[1]=0,e[2]=0,e[3]=0,e[4]=0,e[5]=a,e[6]=0,e[7]=0,e[8]=0,e[9]=0,e[11]=-1,e[12]=0,e[13]=0,e[15]=0,null!=o&&1/0!==o?(e[10]=-(i+r)/(i-r),e[14]=-2*i*r/(i-r)):(e[10]=-1,e[14]=-2*r)}else{var u=1/Math.tan(t/2);e[0]=u/n,e[1]=0,e[2]=0,e[3]=0,e[4]=0,e[5]=u,e[6]=0,e[7]=0,e[8]=0,e[9]=0,e[10]=-r/(i-r),e[11]=-1,e[12]=0,e[13]=0,e[14]=-r*i/(i-r),e[15]=0}return e},lookAt:function(e,t,n,r){var i,o,a,u,c,f,l,s,h,d,p=n[0],v=n[1],g=n[2],y=r[0],m=r[1],b=r[2],x=t[0],w=t[1],k=t[2];return Math.abs(p-x)<1e-6&&Math.abs(v-w)<1e-6&&Math.abs(g-k)<1e-6?this.identity(e):(l=p-x,s=v-w,h=g-k,d=1/Math.sqrt(l*l+s*s+h*h),l*=d,s*=d,h*=d,i=m*h-b*s,o=b*l-y*h,a=y*s-m*l,d=Math.sqrt(i*i+o*o+a*a),d?(d=1/d,i*=d,o*=d,a*=d):(i=0,o=0,a=0),u=s*a-h*o,c=h*i-l*a,f=l*o-s*i,d=Math.sqrt(u*u+c*c+f*f),d?(d=1/d,u*=d,c*=d,f*=d):(u=0,c=0,f=0),e[0]=i,e[1]=u,e[2]=-l,e[3]=0,e[4]=o,e[5]=c,e[6]=-s,e[7]=0,e[8]=a,e[9]=f,e[10]=-h,e[11]=0,e[12]=-n(i,x,w,k),e[13]=-n(u,x,w,k),e[14]=n(l,x,w,k),e[15]=1,e)}}
@@ -164,14 +164,15 @@ function updateCamera() {
     target[1] + radius * Math.cos(phi),
     target[2] + radius * Math.sin(phi) * Math.sin(theta)
   ];
-  const vm = mat4.create();
-  mat4.lookAt(vm, eye, target, [0, 1, 0]);
+  const vw = mat4.create();
+  mat4.lookAt(vw, eye, target, [0, 1, 0]);
   const pm = mat4.create();
   mat4.perspective(pm, 0.820176, canvas.width / canvas.height, 0.1, 1000);
+  const vm = new Float32Array(vw);
+  const vpm = mat4.create();
+  mat4.multiply(vpm, pm, vw);
   function nr(m, r) { m[r] = -m[r]; m[r+4] = -m[r+4]; m[r+8] = -m[r+8]; m[r+12] = -m[r+12]; }
   nr(vm, 1); nr(vm, 2);
-  const vpm = mat4.create();
-  mat4.multiply(vpm, pm, vm);
   nr(vpm, 1);
   nr(vm, 0);
   nr(vpm, 0);
