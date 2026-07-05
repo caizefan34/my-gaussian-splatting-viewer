@@ -1,24 +1,13 @@
 ﻿<!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>3DGS Viewer</title>
-<style>
-*{margin:0;padding:0}
-body{background:#000;font-family:Arial,sans-serif;overflow:hidden}
-canvas{width:100vw;height:100vh;display:block}
-#l{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;top:0;left:0;width:100%;height:100%;color:#fff;background:rgba(0,0,0,.7);transition:all .25s;pointer-events:none}
-#t{font-size:18px}
-#b{width:0%;height:4px;background:#fff;margin-top:20px;max-width:400px;border-radius:2px}
-#info{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.5);font-size:13px;pointer-events:none}
-</style>
+<style>*{margin:0;padding:0;overflow:hidden}body{background:#000}canvas{display:block;width:100vw;height:100vh}</style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
-<div id="l"><div id="t">Loading 3D scene...</div><div id="b"></div></div>
-<div id="info">Drag to rotate - Scroll to zoom</div>
+<canvas id="c"></canvas>
 <script src="https://cdn.jsdelivr.net/npm/gl-matrix@3.4.3/gl-matrix-min.js"></script>
-<script src="viewer.js"></script>
+<script src="main.js"></script>
 </body>
 </html>
